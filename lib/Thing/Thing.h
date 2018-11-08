@@ -23,11 +23,17 @@ namespace gve
 
     enum State
     {
+        UNDEFINED,
         JOINING,
+        JOINING_DONE,
         READY_TO_SEND,
+        SENDING,
+        SENDING_DONE,
         READY_TO_RECEIVE,
-        DATA_RECEIVED,
-        SLEEPING
+        RECEIVING,
+        RECEIVING_DONE,
+        SLEEPING,
+        SLEEPING_DONE
     };
 
     class Thing
@@ -40,9 +46,13 @@ namespace gve
         const u1_t* appKey;
 
         bool deepSleepEnabled = false;
-        int sleepcycles = 7;  // every sleepcycle will last 8 secs, total sleeptime will be sleepcycles * 8 sec
+        bool receiveAfterTransmit = true;
+        int sleepCycles = 1;  // every sleepcycle will last 8 secs, total sleeptime will be sleepcycles * 8 sec
+        long receiveTimeout;
         unsigned int nextPrint = 0;
         State state = JOINING;
+        State lastState = UNDEFINED;
+        uint8_t sleepCycleCount = 0;
         ev_t lastEvent;
 
         //void callback(char* callbackTopic, uint8_t* buffer, unsigned int length);
@@ -51,6 +61,9 @@ namespace gve
         void stateChange(const String& msg);
 
         Payload (*sendCallback)();
+
+        void dataReceived();
+        void (*onDataReceivedCallback)(const Payload&);
 
         void printState(State state);
         void sleep();
@@ -67,6 +80,7 @@ namespace gve
 
         void onStateChange(void (*callback)(const String&));
         void onReadyToSend(Payload (*callback)());
+        void onDataReceived(void (*callback)(const Payload&));
 
         Payload readyToSend();
 

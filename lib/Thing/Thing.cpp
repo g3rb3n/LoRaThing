@@ -161,14 +161,14 @@ void Thing::onStateChange(void (*callback)(const String&))
     stateChangeCallback = callback;
 }
 
-void Thing::onReadyToSend(Payload (*callback)())
-{
-    sendCallback = callback;
-}
-
 void Thing::stateChange(const String& msg)
 {
     if (stateChangeCallback) stateChangeCallback(msg);
+}
+
+void Thing::onReadyToSend(Payload (*callback)())
+{
+    sendCallback = callback;
 }
 
 Payload Thing::readyToSend()
@@ -177,6 +177,24 @@ Payload Thing::readyToSend()
     Payload payload = sendCallback();
     return payload;
 }
+
+void Thing::onDataReceived(void (*callback)(const Payload&))
+{
+    onDataReceivedCallback = callback;
+}
+
+void Thing::dataReceived()
+{
+    if (!onDataReceivedCallback) return;
+    Payload payload;
+    payload.buffer = new uint8_t[LMIC.dataLen];
+    payload.length = LMIC.dataLen;
+    for (int i = 0 ; i < LMIC.dataLen ; ++i)
+        payload.buffer[i] = LMIC.frame[LMIC.dataBeg + i];
+    onDataReceivedCallback(payload);
+    delete payload.buffer;
+}
+
 
 void Thing::os_getArtEui (u1_t* buf) {
     memcpy(buf, this->appEUI, 8);
@@ -235,10 +253,15 @@ char* stateToCString(State state)
     switch (state)
     {
         case JOINING: return "joining";
-        case READY_TO_SEND: return "sending";
-        case READY_TO_RECEIVE: return "receiving";
-        case DATA_RECEIVED: return "printing";
+        case JOINING_DONE: return "joining done";
+        case READY_TO_SEND: return "ready to send";
+        case SENDING: return "sending";
+        case SENDING_DONE: return "sending done";
+        case READY_TO_RECEIVE: return "ready to receive";
+        case RECEIVING: return "receiving";
+        case RECEIVING_DONE: return "receiving done";
         case SLEEPING: return "sleeping";
+        case SLEEPING_DONE: return "sleeping done";
         default: return "undefined";
     }
 }
@@ -266,7 +289,7 @@ const char* eventToCString(ev_t ev)
     }
 }
 
-void Thing::onEvent (ev_t ev)
+void Thing::onEvent(ev_t ev)
 {
     Serial.println(eventToCString(ev));
     switch (ev) {
@@ -286,19 +309,99 @@ void Thing::onEvent (ev_t ev)
             // Disable link check validation (automatically enabled
             // during join, but not supported by TTN at this time).
             LMIC_setLinkCheckMode(0);
-            state = READY_TO_SEND;
+            state = JOINING_DONE;
             break;
         case EV_REJOIN_FAILED:
             // Re-init
             os_setCallback(&initjob, initfunc);
             break;
         case EV_TXCOMPLETE:
-            state = DATA_RECEIVED;
-            //if (LMIC.dataLen)
-            //    state = DATA_RECEIVED;
+            state = SENDING_DONE;
             break;
         default: break;
     }
+}
+
+
+void Thing::handle()
+{
+    this->printState(state);
+    switch(state)
+    {
+        case JOINING:
+            os_runloop_once();
+            break;
+        case JOINING_DONE:
+            state = READY_TO_SEND;
+            break;
+        case READY_TO_SEND:
+            do_send(&sendjob);
+            state = SENDING;
+            break;
+        case SENDING:
+            os_runloop_once();
+            break;
+        case SENDING_DONE:
+            if (this->receiveAfterTransmit)
+                state = READY_TO_RECEIVE;
+            else
+                state = SLEEPING;
+            break;
+        case READY_TO_RECEIVE:
+            this->receiveTimeout = millis() + 2000;
+            //os_runloop_once();
+            state = RECEIVING;
+            break;
+        case RECEIVING:
+            if (millis() > this->receiveTimeout)
+                state = SLEEPING;
+            if (LMIC.dataLen)
+                state = RECEIVING_DONE;
+            else
+                os_runloop_once();
+            break;
+        case RECEIVING_DONE:
+            Serial.print(F("Data Received: "));
+            Serial.println(LMIC.frame[LMIC.dataBeg],HEX);
+            //i = LMIC.frame[LMIC.dataBeg];
+            //this->printData();
+            this->dataReceived();
+            state = SLEEPING;
+            break;
+        case SLEEPING:
+            this->sleep();
+            break;
+        case SLEEPING_DONE:
+            this->sleepCycleCount = 0;
+            state = READY_TO_SEND;
+            break;
+        default:
+            os_runloop_once();
+            Serial.println("Undefined state");
+    }
+    //setLed(state);
+}
+
+#define CHANNEL 0
+void Thing::setup()
+{
+    Serial.begin(9600);
+    Serial.println(F("Starting"));
+    delay(2000);
+    os_init();
+    // Reset the MAC state. Session and pending data transfers will be discarded.
+    os_setCallback(&initjob, initfunc);
+    LMIC_reset();
+
+}
+
+void Thing::disableChannelsExcept(Channel channel)
+{
+    for (uint8_t i = 0; i < 9; i++)
+        LMIC_disableChannel(i);
+#if defined(CFG_us915)
+    LMIC_enableChannel(channel);
+#endif
 }
 
 void printOpModeMode(uint8_t opmode)
@@ -327,53 +430,23 @@ void printOpMode(uint8_t opmode)
     //Serial.println(opmode >> 0 & 0x3, HEX);
 }
 
-#define CHANNEL 0
-void Thing::setup()
-{
-    Serial.begin(9600);
-    Serial.println(F("Starting"));
-    delay(2000);
-    os_init();
-    // Reset the MAC state. Session and pending data transfers will be discarded.
-    os_setCallback(&initjob, initfunc);
-    LMIC_reset();
-
-}
-
-void Thing::disableChannelsExcept(Channel channel)
-{
-    for (uint8_t i = 0; i < 9; i++)
-        LMIC_disableChannel(i);
-#if defined(CFG_us915)
-    LMIC_enableChannel(channel);
-#endif
-}
-
 void Thing::printData()
 {
-    int i = LMIC.frame[LMIC.dataBeg];
-//    data = LMIC.frame[LMIC.dataBeg];
-    // data received in rx slot after tx
-    // if any data received, a LED will blink
-    // this number of times, with a maximum of 10
-    Serial.println(LMIC.frame[LMIC.dataBeg],HEX);
-    // i (0..255) can be used as data for any other application
-    // like controlling a relay, showing a display message etc.
-    if (i > 10) i = 10;     // maximum number of BLINKs
-    for(int j = 0 ; j < i ; ++j)
-    {
-        digitalWrite(LedPin,HIGH);
-        delay(200);
-        digitalWrite(LedPin,LOW);
-        delay(400);
-    }
+    Serial.print("DataBegin:");
+    Serial.println(LMIC.dataBeg);
+    Serial.print("DataLength:");
+    Serial.println(LMIC.dataLen);
+    for (int i = LMIC.dataBeg ; i < LMIC.dataBeg + LMIC.dataLen ; ++i)
+        Serial.println(LMIC.frame[i],HEX);
 }
 
 void Thing::printState(State state)
 {
     unsigned int now = millis();
-    if (now > this->nextPrint)
+
+    if (now > this->nextPrint || state != this->lastState)
     {
+        this->lastState = state;
         SX1276 sx;
         Serial.print("Freq:");
         Serial.print(sx.rfFrequency());
@@ -392,24 +465,14 @@ void Thing::printState(State state)
 
 void Thing::sleep()
 {
-    if (this->deepSleepEnabled)
-        for (int i = 0 ; i < this->sleepcycles ; i++)
-            LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);    //sleep 8 seconds
-    else
-        for (long i = 0 ; i < 60 ; i++)
-            delay(1000);
-}
-
-void Thing::handle()
-{
-    switch(state){
-        case JOINING: os_runloop_once(); break;
-        case READY_TO_SEND: do_send(&sendjob); state = READY_TO_RECEIVE; break;
-        case READY_TO_RECEIVE: os_runloop_once(); break;
-        case DATA_RECEIVED: this->printData(); state = SLEEPING; break;
-        case SLEEPING: this->sleep(); state = READY_TO_SEND; break;
-        default: os_runloop_once(); Serial.println("Undefined state");
+    if (this->sleepCycleCount >= this->sleepCycles)
+    {
+        this->state = SLEEPING_DONE;
+        return;
     }
-    this->printState(state);
-    //setLed(state);
+    this->sleepCycleCount++;
+    if (this->deepSleepEnabled)
+        LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);    //sleep 8 seconds
+    else
+        delay(8000);
 }

@@ -9,11 +9,20 @@ Thing thing(DEVEUI, APPEUI, APPKEY);
 
 int count = 0;
 
-void onStateChange(const String& msg){
+void onStateChange(const String& msg)
+{
     Serial.println(msg);
 }
 
-Payload getSendPayload(){
+void onDataReceived(const Payload& payload)
+{
+    for (uint8_t i = 0 ; i < payload.length ; ++i)
+        Serial.print(static_cast<char>(payload.buffer[i]));
+    Serial.println();
+}
+
+Payload getSendPayload()
+{
     Payload payload;
     payload.buffer = new uint8_t[12];
     payload.buffer[0] = 'H';
@@ -41,6 +50,7 @@ void setup()
     Serial.println("Set callback");
     thing.onStateChange(onStateChange);
     thing.onReadyToSend(getSendPayload);
+    thing.onDataReceived(onDataReceived);
     Serial.println("Setup");
     thing.setup();
     Serial.println("Setup done");
