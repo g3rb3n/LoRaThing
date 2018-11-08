@@ -48,7 +48,7 @@ namespace gve
         bool deepSleepEnabled = false;
         bool receiveAfterTransmit = true;
         int sleepCycles = 1;  // every sleepcycle will last 8 secs, total sleeptime will be sleepcycles * 8 sec
-        long receiveTimeout;
+        unsigned long receiveTimeout;
         unsigned int nextPrint = 0;
         State state = JOINING;
         State lastState = UNDEFINED;

@@ -139,8 +139,8 @@ Thing::Thing(const u1_t* devEUI, const u1_t* appEUI, const u1_t* appKey)
     appEUI(appEUI),
     appKey(appKey)
 {
-    reverse(this->appEUI, 8);
-    reverse(this->devEUI, 8);
+    reverse(const_cast<u1_t*>(this->appEUI), 8);
+    reverse(const_cast<u1_t*>(this->devEUI), 8);
     instance = this;
     Serial.println("Thing()");
 }
@@ -151,9 +151,9 @@ Thing::~Thing()
 
 void Thing::printSettings() const
 {
-    printArray(this->devEUI, 8);
-    printArray(this->appEUI, 8);
-    printArray(this->appKey, 16);
+    printArray(const_cast<u1_t*>(this->devEUI), 8);
+    printArray(const_cast<u1_t*>(this->appEUI), 8);
+    printArray(const_cast<u1_t*>(this->appKey), 16);
 }
 
 void Thing::onStateChange(void (*callback)(const String&))
@@ -173,7 +173,12 @@ void Thing::onReadyToSend(Payload (*callback)())
 
 Payload Thing::readyToSend()
 {
-    if (!sendCallback) return;
+    if (!sendCallback)
+    {
+        Payload payload;
+        payload.length = 0;
+        return payload;
+    }
     Payload payload = sendCallback();
     return payload;
 }
@@ -248,7 +253,7 @@ void setLed(State state){
 }
 */
 
-char* stateToCString(State state)
+const char* stateToCString(State state)
 {
     switch (state)
     {
